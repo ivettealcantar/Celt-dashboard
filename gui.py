@@ -37,7 +37,7 @@ with tab_run:
         if st.button("▶️ Start Scraper Process", type="primary"):
             status_box = st.status("Initializing scraping session...", expanded=True)
             
-            # Isolated session folder per user run
+            # Create an isolated temporary folder per user execution
             session_id = st.runtime.scriptrunner.get_script_run_ctx().session_id
             temp_dir = Path(f"temp_{session_id}")
             temp_dir.mkdir(exist_ok=True)
@@ -49,7 +49,7 @@ with tab_run:
                 f.write(uploaded_accounts.getbuffer())
                 
             try:
-                # Execute async scraper pass
+                # Execute async scraper pipeline
                 asyncio.run(scraper.run_scraper_process(
                     username=user_email,
                     password=user_password,
@@ -61,7 +61,7 @@ with tab_run:
                 status_box.update(label="✅ Processing Complete!", state="complete")
                 st.balloons()
                 
-                # Display output and download button
+                # Display output preview and download button
                 if output_path.exists():
                     df_results = pd.read_excel(output_path)
                     st.subheader("Scraped Accounts Preview")
@@ -80,7 +80,7 @@ with tab_run:
                 st.error(f"Error: {err}")
                 
             finally:
-                # Cleanup session directory
+                # Clean up session directory immediately
                 for item in temp_dir.glob("*"):
                     item.unlink()
                 temp_dir.rmdir()
@@ -114,7 +114,7 @@ with tab_analytics:
         
         st.divider()
         
-        # Charts Row
+        # Analytics Charts
         col_c1, col_c2 = st.columns(2)
         
         with col_c1:
@@ -144,4 +144,4 @@ with tab_analytics:
         st.subheader("Detailed Report View")
         st.dataframe(df_report, use_container_width=True)
     else:
-        st.warning("No sample analytical report available yet. Run a scraping job to view data.")
+        st.warning("No analytical report generated yet. Run a scraping job to populate data.")

@@ -238,9 +238,7 @@ def extract_service_and_rate(raw_text):
 
 
 def extract_account_balance(raw_text):
-    """
-    Read account-balance rows from gas/electric bill formats.
-    """
+    """Read account-balance rows from gas/electric bill formats."""
     flat_text = re.sub(r"\s+", " ", raw_text).strip()
 
     section_match = re.search(
@@ -665,9 +663,9 @@ async def run_scraper_process(username, password, input_path, output_path, statu
         if status_box:
             status_box.write("Connecting to remote browser engine (Kernel.sh)...")
 
-        # Connect remotely over CDP to Kernel cloud browser instance
+        # Connect remotely over CDP to Kernel cloud browser instance using the valid v1 CDP endpoint URL
         browser = await p.chromium.connect_over_cdp(
-            f"wss://connect.kernel.sh?api_key={kernel_key}"
+            f"wss://api.kernel.sh/v1/cdp?api_key={kernel_key}"
         )
 
         context = await browser.new_context(accept_downloads=True)
