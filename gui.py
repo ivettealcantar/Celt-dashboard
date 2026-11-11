@@ -1,215 +1,136 @@
 import asyncio
-import os
-import queue
-import subprocess
-import sys
-import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext
-
 import pandas as pd
+import plotly.express as px
+import streamlit as st
 
-import bill_checker
+# Import your scraper module
+import national_grid_scraper as scraper
 
-log_queue = queue.Queue()
-
-
-class QueueWriter:
-    def write(self, text):
-        if text:
-            log_queue.put(text)
-
-    def flush(self):
-        pass
-
-
-root = tk.Tk()
-root.title("National Grid Bill Checker")
-root.geometry("820x580")
-
-input_var = tk.StringVar()
-output_var = tk.StringVar()
-headless_var = tk.BooleanVar(value=False)
-status_var = tk.StringVar(value="Ready")
-
-
-def gui_pause(message):
-    """Called from the worker thread; shows a dialog and waits for OK."""
-    done = threading.Event()
-
-    def show():
-        messagebox.showinfo("Action needed", message.strip())
-        done.set()
-
-    root.after(0, show)
-    done.wait()
-    return ""
-
-
-bill_checker.pause = gui_pause
-
-
-def open_file(path):
-    if sys.platform == "darwin":
-        subprocess.run(["open", str(path)])
-    elif sys.platform.startswith("win"):
-        os.startfile(str(path))
-    else:
-        subprocess.run(["xdg-open", str(path)])
-
-
-def pick_input():
-    path = filedialog.askopenfilename(
-        filetypes=[("Excel or CSV files", "*.xlsx *.xls *.csv")]
-    )
-    if path:
-        input_var.set(path)
-        if not output_var.get():
-            output_var.set(
-                str(Path(path).with_name(Path(path).stem + "_report.xlsx"))
-            )
-
-
-def pick_output():
-    path = filedialog.asksaveasfilename(
-        defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")]
-    )
-    if path:
-        output_var.set(path)
-
-
-def make_template():
-    path = filedialog.asksaveasfilename(
-        defaultextension=".xlsx", initialfile="accounts_template.xlsx"
-    )
-    if path:
-        pd.DataFrame(
-            {"Account Number": ["0123456789"], "Account Address": [""]}
-        ).to_excel(path, index=False)
-        messagebox.showinfo("Saved", "Template saved.")
-
-
-def check_file():
-    if not input_var.get():
-        messagebox.showwarning("Missing", "Choose an accounts file first.")
-        return None
-    try:
-        bill_checker.INPUT_FILE = Path(input_var.get())
-        accounts = bill_checker.load_accounts()
-    except Exception as exc:
-        messagebox.showerror("Problem with file", str(exc))
-        return None
-
-    preview = "\n".join(accounts["Account Number"].head(5))
-    more = "\n..." if len(accounts) > 5 else ""
-    messagebox.showinfo(
-        "File looks good",
-        f"Found {len(accounts)} account(s):\n\n{preview}{more}",
-    )
-    return accounts
-
-
-def finished(results, error):
-    start_btn.config(state="normal")
-    root.bell()  # system beep
-    root.lift()  # bring the window to the front
-    root.attributes("-topmost", True)
-    root.after(500, lambda: root.attributes("-topmost", False))
-
-    if error:
-        status_var.set("Stopped with an error")
-        messagebox.showerror("Stopped", f"The run stopped:\n\n{error}")
-        return
-
-    total = len(results or [])
-    needs_review = sum(
-        1 for r in (results or []) if r.get("Result") == "Needs review"
-    )
-    status_var.set(f"Finished: {total} rows, {needs_review} need review")
-
-    if messagebox.askyesno(
-        "Finished",
-        f"Done! {total} bill rows saved.\n"
-        f"{needs_review} row(s) marked 'Needs review'.\n\n"
-        f"Open the report now?",
-    ):
-        open_file(bill_checker.OUTPUT_FILE)
-
-
-def run_job():
-    sys.stdout = QueueWriter()
-    sys.stderr = sys.stdout
-    results, error = None, None
-    try:
-        results = asyncio.run(bill_checker.main())
-    except Exception as exc:
-        error = exc
-        print(f"\nERROR: {exc}")
-    finally:
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
-        root.after(0, lambda: finished(results, error))
-
-
-def start():
-    if not input_var.get() or not output_var.get():
-        messagebox.showwarning("Missing", "Choose an input and output file.")
-        return
-
-    if check_file() is None:
-        return
-
-    bill_checker.INPUT_FILE = Path(input_var.get())
-    bill_checker.OUTPUT_FILE = Path(output_var.get())
-    # Hidden mode only works once a saved login exists.
-    bill_checker.HEADLESS = (
-        headless_var.get() and bill_checker.AUTH_FILE.exists()
-    )
-
-    start_btn.config(state="disabled")
-    status_var.set("Running... do not close the browser")
-    log.delete("1.0", tk.END)
-    threading.Thread(target=run_job, daemon=True).start()
-
-
-def poll_log():
-    while not log_queue.empty():
-        log.insert(tk.END, log_queue.get())
-        log.see(tk.END)
-    root.after(100, poll_log)
-
-
-frame = tk.Frame(root, padx=12, pady=12)
-frame.pack(fill="x")
-
-tk.Label(frame, text="Accounts file:").grid(row=0, column=0, sticky="w")
-tk.Entry(frame, textvariable=input_var, width=65).grid(row=0, column=1)
-tk.Button(frame, text="Browse", command=pick_input).grid(row=0, column=2)
-tk.Button(frame, text="Check file", command=check_file).grid(row=0, column=3)
-
-tk.Label(frame, text="Save report as:").grid(row=1, column=0, sticky="w")
-tk.Entry(frame, textvariable=output_var, width=65).grid(row=1, column=1)
-tk.Button(frame, text="Browse", command=pick_output).grid(row=1, column=2)
-
-tk.Checkbutton(
-    frame,
-    text="Run browser hidden (after first login)",
-    variable=headless_var,
-).grid(row=2, column=1, sticky="w")
-
-start_btn = tk.Button(frame, text="Start", command=start, width=14)
-start_btn.grid(row=3, column=1, sticky="w", pady=8)
-tk.Button(
-    frame, text="Download input template", command=make_template
-).grid(row=3, column=1, sticky="e")
-
-log = scrolledtext.ScrolledText(root, height=20)
-log.pack(fill="both", expand=True, padx=12, pady=(0, 6))
-
-tk.Label(root, textvariable=status_var, anchor="w").pack(
-    fill="x", padx=12, pady=(0, 8)
+st.set_page_config(
+    page_title="Utility Automation & Analytics",
+    page_icon="⚡",
+    layout="wide",
 )
 
-poll_log()
-root.mainloop()
+st.title("⚡ Utility Scraper & Capital Operations Dashboard")
+st.markdown("Upload account ledgers, execute automated web scrapers, and analyze late fees and maintenance charges.")
+
+# Sidebar Controls
+st.sidebar.header("📁 Operations Panel")
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Accounts (.xlsx, .csv)", type=["xlsx", "csv"]
+)
+
+# Authentication State Uploader
+st.sidebar.divider()
+st.sidebar.subheader("🔐 Session Cookie Management")
+auth_file_upload = st.sidebar.file_uploader("Update auth_state.json", type=["json"])
+if auth_file_upload:
+    auth_save_path = Path(__file__).parent / "auth_state.json"
+    with open(auth_save_path, "wb") as f:
+        f.write(auth_file_upload.getbuffer())
+    st.sidebar.success("Session state updated!")
+
+# Multi-Tab Layout
+tab_run, tab_analytics = st.tabs(["🚀 Scraper Execution", "📊 Analytics & Reports"])
+
+with tab_run:
+    st.header("Run Portal Web Scraper")
+    
+    if uploaded_file is not None:
+        temp_input_path = Path("temp_input.xlsx")
+        temp_output_path = Path("temp_output_report.xlsx")
+        
+        with open(temp_input_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        st.success(f"Loaded File: **{uploaded_file.name}**")
+        
+        try:
+            df_input = scraper.load_accounts(temp_input_path)
+            st.subheader("Account Queue Preview")
+            st.dataframe(df_input, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error reading file format: {e}")
+            
+        if st.button("▶️ Start Scraper Process", type="primary"):
+            status_box = st.status("Executing Scraper Task...", expanded=True)
+            
+            try:
+                # Run asynchronous scraping pipeline
+                asyncio.run(scraper.run_scraper_process(temp_input_path, temp_output_path, status_box))
+                
+                status_box.update(label="✅ Process Completed Successfully!", state="complete")
+                st.balloons()
+            except Exception as err:
+                status_box.update(label="❌ Scraping Failed", state="error")
+                st.error(f"Error: {err}")
+    else:
+        st.info("👈 Please upload an Excel or CSV file in the left sidebar to begin.")
+
+with tab_analytics:
+    st.header("Data Analytics & Reports")
+    
+    report_path = Path("temp_output_report.xlsx")
+    if not report_path.exists():
+        report_path = Path("testerfinal_payment_and_late_fee_report.xlsx")
+        
+    if report_path.exists():
+        df_report = pd.read_excel(report_path)
+        
+        # Summary Metrics Row
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Accounts", len(df_report["Account Number"].unique()))
+        
+        total_charges = df_report['Current Charges'].sum() if "Current Charges" in df_report else 0
+        m2.metric("Total Current Charges", f"${total_charges:,.2f}")
+        
+        total_late = df_report['Late Fee Amount'].sum() if "Late Fee Amount" in df_report else 0
+        m3.metric("Total Late Fees", f"${total_late:,.2f}")
+        
+        flagged = (df_report["Result"] == "Needs review").sum() if "Result" in df_report else 0
+        m4.metric("Flagged Accounts", flagged)
+        
+        st.divider()
+        
+        # Charts Row
+        col_c1, col_c2 = st.columns(2)
+        
+        with col_c1:
+            st.subheader("Current Charges by Utility Type")
+            if "Utility Type" in df_report and "Current Charges" in df_report:
+                fig_bar = px.bar(
+                    df_report,
+                    x="Utility Type",
+                    y="Current Charges",
+                    color="Result",
+                    barmode="group",
+                    title="Utility Cost Distribution",
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+                
+        with col_c2:
+            st.subheader("Late Fee Frequency Ratio")
+            if "Late Fee Instance" in df_report:
+                fig_pie = px.pie(
+                    df_report,
+                    names="Late Fee Instance",
+                    title="Late Fee Occurrences",
+                    hole=0.4,
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+        # Interactive Data Table & Export
+        st.subheader("Detailed Report View")
+        st.dataframe(df_report, use_container_width=True)
+        
+        with open(report_path, "rb") as file:
+            st.download_button(
+                label="📥 Download Full Excel Report",
+                data=file,
+                file_name="utility_late_fee_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    else:
+        st.warning("No report file available yet. Upload accounts and run the scraper first.")
